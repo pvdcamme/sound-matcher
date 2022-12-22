@@ -10,8 +10,9 @@ import cupy
 import cupyx.scipy.signal
 
 
-# Transition at 2kHz for a 44100 sample rate
-low_pass_filter = [ 0.000815346367882, 0.0009301516787421183, 0.0013556873516122592,0.0018067990163216174,
+# Transition at 2000Hz for a 44100 sample rate
+# prepares for decimation (/10).
+decade_low_pass_filter = [ 0.000815346367882, 0.0009301516787421183, 0.0013556873516122592,0.0018067990163216174,
 0.002231661744244805,
 0.002566623111061489,
 0.002742371472470933,
@@ -108,20 +109,28 @@ low_pass_filter = [ 0.000815346367882, 0.0009301516787421183, 0.0013556873516122
 0.0009301516787421183,  
 0.000815346367882 ]
 
+
+
 def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq=15e3):
   """
     Helper fun for showing a filter response.
   """
   def rms(vals):
     return cupy.sum(vals ** 2) / len(vals)
-    
+  def log_range(start, end , count):
+    start_moment = time.time()
+    log_start =math.log(start)
+    log_end = math.log(end)
+    log_step = (log_end - log_start) / count
+
+    result = cupy.exp(cupy.arange(log_start, log_end, step=log_step))
+    return cupy.asnumpy(result)
+
   fir_filter =cupy.array(fir_filter)
 
   moments = cupy.arange(1024 * 1024) / sample_rate 
-  frequencies = [start_freq]
-  while frequencies[-1] <= end_freq:
-    frequencies.append(frequencies[-1] * 1.02)
-  
+  frequencies = log_range(start_freq, end_freq, 1000)
+
   filter_responses = []
   for idx, freq in enumerate(frequencies):
     phase = moments * (2 * cupy.pi * freq)
