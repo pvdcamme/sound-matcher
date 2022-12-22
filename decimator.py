@@ -110,25 +110,30 @@ low_pass_filter = [ 0.000815346367882, 0.0009301516787421183, 0.0013556873516122
 
 def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq=15e3):
   """
-    Plots the filter response.
+    Helper fun for showing a filter response.
   """
-  time = cupy.arange(1024 * 1024) / sample_rate 
-  to_use = [start_freq]
+  start = time.time()
   fir_filter =cupy.array(fir_filter)
-  while to_use[-1] < end_freq:
-    to_use.append(to_use[-1] * 1.02)
+
+  moments = cupy.arange(1024 * 1024) / sample_rate 
+  frequencies = [start_freq]
+  while frequencies[-1] <= end_freq:
+    frequencies.append(frequencies[-1] * 1.02)
   
   filter_responses = []
-  for idx, freq in enumerate(to_use):
-    phase = time * (2 * 3.1415) * freq
-    val = cupy.sin(phase)
-    rms = cupy.sum(val ** 2)  / len(val)
-    filtered = cupyx.scipy.signal.oaconvolve(fir_filter, val)
-    filter_rms = cupy.sum(filtered ** 2) / len(filtered)
-    filter_responses.append(float(filter_rms) / float(rms))
+  for idx, freq in enumerate(frequencies):
+    phase = moments * (2 * cupy.pi * freq)
+    amplitudes = cupy.sin(phase)
+    rms = cupy.sum(amplitudes** 2) / len(phase)
+    filtered = cupyx.scipy.signal.oaconvolve(amplitudes, fir_filter, mode="same")
+    filter_rms = cupy.sum(filtered ** 2) / len(phase)
+    filter_responses.append(filter_rms / rms)
 
+  # Get the actual results.
+  filter_responses = [float(lazy_result) for lazy_result in filter_responses]
   filter_responses = 10 * np.log(filter_responses) / np.log(10) 
-  plt.plot(to_use, filter_responses)
+  print(f"Plotting took: {time.time() - start:.2f}s for {len(frequencies)} samples")
+  plt.plot(frequencies, filter_responses)
   plt.grid()
   plt.show()
 
