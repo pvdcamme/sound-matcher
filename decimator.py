@@ -2,7 +2,7 @@
   Utils to reduce the sample rate of the audio.
   This helps to speed up the other analysis.
 """
-import numpy as np
+import math
 import matplotlib.pyplot as plt
 import time
 
@@ -112,7 +112,6 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
   """
     Helper fun for showing a filter response.
   """
-  start = time.time()
   fir_filter =cupy.array(fir_filter)
 
   moments = cupy.arange(1024 * 1024) / sample_rate 
@@ -130,9 +129,7 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
     filter_responses.append(filter_rms / rms)
 
   # Get the actual results.
-  filter_responses = [float(lazy_result) for lazy_result in filter_responses]
-  filter_responses = 10 * np.log(filter_responses) / np.log(10) 
-  print(f"Plotting took: {time.time() - start:.2f}s for {len(frequencies)} samples")
+  filter_responses = [math.log(float(lazy_result), 10) * 10 for lazy_result in filter_responses]
   plt.plot(frequencies, filter_responses)
   plt.grid()
   plt.show()
