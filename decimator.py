@@ -108,14 +108,11 @@ low_pass_filter = [ 0.000815346367882, 0.0009301516787421183, 0.0013556873516122
 0.0009301516787421183,  
 0.000815346367882 ]
 
-def plot_filter_response(fir_filter):
+def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq=15e3):
   """
     Plots the filter response.
   """
-  sample_rate = 44100
   time = cupy.arange(1024 * 1024) / sample_rate 
-  start_freq = 10
-  end_freq = 15e3
   to_use = [start_freq]
   fir_filter =cupy.array(fir_filter)
   while to_use[-1] < end_freq:
@@ -132,7 +129,6 @@ def plot_filter_response(fir_filter):
 
   filter_responses = 10 * np.log(filter_responses) / np.log(10) 
   plt.plot(to_use, filter_responses)
-  #plt.yscale("log")
   plt.grid()
   plt.show()
 

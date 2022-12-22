@@ -253,5 +253,5 @@ def show_match():
   plt.show()
     
 #find_most_popular_section2(2 ** 18)
-decimator.plot_filter_response(fir_filter)
+decimator.plot_filter_response(decimator.low_pass_filter)
 
