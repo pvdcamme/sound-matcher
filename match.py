@@ -1,3 +1,8 @@
+"""
+  A program to find repeated audio fragments in an audio file.
+
+  Very prototype at the moment.
+"""
 import struct
 import bisect
 
@@ -9,7 +14,25 @@ import cupy
 import cupy.fft
 import cupyx.scipy.signal
 
+import decimator
+
 FILE_NAME = "stubru.raw"
+
+def benchmark_np():
+  size = 2 ** 18
+  cnt = 128
+  to_check = np.random.random(size)
+  others = [np.random.random(size) for _ in range(cnt)]
+  total_max = 0
+  start = time.time()
+  for o in others:
+    current_max = np.max(np.fft.irfft(to_check * o))
+    total_max = max(total_max, current_max)
+
+  end = time.time()
+  print(f"Numpy: {total_max} in {1e3 * (end - start):.2f} ms")
+
+benchmark_np()
 
 def read_chunks():
     start = time.time()
@@ -103,19 +126,16 @@ def find_most_popular_section(length=2**18):
             peak_pos = moment
             peak_max = abs(max_val)
         print(f"chunk result {max_val} in {time.time() - start:.2f}, x{((base_idx + 1) * length / sample_rate)/(time.time() - fun_start):.2f} -- Best moment {peak_pos:.2f}")
-        
-        
-
-        
-def find_most_popular_section2(length=2**18):
+       
+def find_most_popular_section2(length=2**18, name=FILE_NAME):
     fun_start = time.time()
-    name = "stubru.raw"
     sample_rate =44100
 
     small_chunk = length
     chunk_size = 4 * length
-    cuda_streams = [cupy.cuda.Stream(non_blocking=True) for _ in range(8)]    
+    cuda_streams = [cupy.cuda.Stream(non_blocking=True) for _ in range(4)]    
     base_stream = enumerate(chunked_read(name, length))
+    num_base_sections = 128
     def pp():
         current = {"peak_pos": 0, "peak_max": 0}
         def process_done(together, do_sync=False):
@@ -137,7 +157,7 @@ def find_most_popular_section2(length=2**18):
     together = []   
     while True:
         base_selection = []
-        for idx in range(16):
+        for idx in range(num_base_sections):
             stream =cuda_streams[ idx % len(cuda_streams)]
             stream.use()
             a_next = next(base_stream, None)
@@ -147,31 +167,29 @@ def find_most_popular_section2(length=2**18):
             to_pad = chunk_size - length
             padded = cupy.pad(base_sample, to_pad // 2)
             bb = cupy.conj(cupy.fft.rfft(padded))
-            base_selection.append((base_idx, bb))
+            base_selection.append((base_idx, cupy.asarray(bb, dtype=cupy.complex64)))
 
         highest_idx = 0
 
-
         print("Processed batch, iterating over full")
         for fft_larger in map(cupy.fft.rfft, chunked_read(name,chunk_size)):
-            multiplied = []
 
+            start_batch = time.time()
             for stream_idx, (idx, smaller) in enumerate(base_selection):
                 stream = cuda_streams[stream_idx % len(cuda_streams)]
                 stream.use()
-                highest_idx = max(highest_idx, idx)
-                multiplied.append((idx, smaller * fft_larger))
 
-
-            for stream_idx, (idx, smaller) in enumerate(multiplied):
-                stream = cuda_streams[stream_idx % len(cuda_streams)]
-                stream.use()
-                inverse = cupy.fft.irfft(smaller)
+                inverse = cupy.fft.irfft(smaller * fft_larger)
                 together.append((stream, inverse.max(), idx))
 
+                highest_idx = max(highest_idx, idx)
 
+            cuda_streams[0].synchronize()
+            done_batch = time.time()
+            print(f"Total: {1e3 * (done_batch - start_batch):.2f}")
+
+        cuda_streams[0].synchronize()
         cupy.cuda.Stream.null.use()
-        together[0][0].synchronize()
         peak_pos, peak_max = peaker(together)
         moment = highest_idx * length / sample_rate
 
@@ -234,5 +252,6 @@ def show_match():
   cid = plt.gcf().canvas.mpl_connect('motion_notify_event', onclick)    
   plt.show()
     
-find_most_popular_section2(2 ** 18)
+#find_most_popular_section2(2 ** 18)
+decimator.plot_filter_response(fir_filter)
 
