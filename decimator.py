@@ -117,6 +117,7 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
   """
   def rms(vals):
     return cupy.sum(vals ** 2) / len(vals)
+
   def log_range(start, end , count):
     start_moment = time.time()
     log_start =math.log(start)
@@ -132,7 +133,7 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
   frequencies = log_range(start_freq, end_freq, 1000)
 
   filter_responses = []
-  for idx, freq in enumerate(frequencies):
+  for freq in frequencies:
     phase = moments * (2 * cupy.pi * freq)
     amplitudes = cupy.sin(phase)
 
@@ -141,6 +142,7 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
 
   # Get the actual results.
   filter_responses = [math.log(float(lazy_result), 10) * 10 for lazy_result in filter_responses]
+
   plt.plot(frequencies, filter_responses)
   plt.xlabel("Frequency [Hz]")
   plt.ylabel("Gain [dB]")
