@@ -112,25 +112,36 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
   """
     Helper fun for showing a filter response.
   """
+  def rms(vals):
+    return cupy.sum(vals ** 2) / len(vals)
   fir_filter =cupy.array(fir_filter)
 
+  start = time.time()
   moments = cupy.arange(1024 * 1024) / sample_rate 
   frequencies = [start_freq]
   while frequencies[-1] <= end_freq:
     frequencies.append(frequencies[-1] * 1.02)
   
   filter_responses = []
+  
   for idx, freq in enumerate(frequencies):
     phase = moments * (2 * cupy.pi * freq)
     amplitudes = cupy.sin(phase)
-    rms = cupy.sum(amplitudes** 2) / len(phase)
+
     filtered = cupyx.scipy.signal.oaconvolve(amplitudes, fir_filter, mode="same")
-    filter_rms = cupy.sum(filtered ** 2) / len(phase)
-    filter_responses.append(filter_rms / rms)
+    filter_responses.append(rms(filtered) / rms(amplitudes))
 
   # Get the actual results.
   filter_responses = [math.log(float(lazy_result), 10) * 10 for lazy_result in filter_responses]
+  print(f"Took; {time.time() - start}s")
   plt.plot(frequencies, filter_responses)
   plt.grid()
   plt.show()
+
+
+def decimate(values):
+  #
+  pass
+
+  
 
