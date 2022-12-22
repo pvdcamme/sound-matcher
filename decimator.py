@@ -151,8 +151,12 @@ def plot_filter_response(fir_filter, sample_rate =44100, start_freq=10, end_freq
 
 
 def decimate(values):
-  #
-  pass
-
+  """
+    Reduce the sample rate by 10
+  """
+  values =cupy.array(values)
+  filter_taps = cupy.array(decade_low_pass_filter) 
+  low_passed = cupyx.scipy.signal.oaconvolve(values, filter_taps, mode="same")
+  return low_passed[::10]
   
 
