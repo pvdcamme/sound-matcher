@@ -32,7 +32,6 @@ def benchmark_np():
   end = time.time()
   print(f"Numpy: {total_max} in {1e3 * (end - start):.2f} ms")
 
-benchmark_np()
 
 def read_chunks():
     start = time.time()
@@ -58,7 +57,6 @@ def normalize_array(data):
     scale = max_val - min_val    
     data = (data - (min_val + scale/2 )) * (2. /scale )
     return data
-
     
 def chunked_read(name, size):
     offset = 0
@@ -68,6 +66,16 @@ def chunked_read(name, size):
             return
         offset += size
         yield normalize_array(cupy.asarray(data, dtype=np.float32))
+
+def chunked_read_cpu(name, size):
+    offset = 0
+    while True:
+        data = np.fromfile(name, dtype=np.int16, count=size, offset=offset)
+        if len(data) != size:
+            return
+        offset += size
+        yield normalize_array(np.asarray(data, dtype=np.float32))
+
 
 
 def counter(start = 0):
@@ -196,6 +204,53 @@ def find_most_popular_section2(length=2**18, name=FILE_NAME):
         print(f"chunk results up to moment, x{((base_idx + 1) * length / sample_rate)/(time.time() - fun_start):.2f} -- Best moment {peak_pos:.2f}-- {len(together)} running")
     return peaker(together, True)
             
+def find_most_popular_section3(length=2**18, name=FILE_NAME):
+    def calculate_hash(sorted_idx, moment):
+      seen = set(range(4))
+      current_hash = []
+      for peak_idx in map(int, reversed(sorted_idx)):
+        if peak_idx not in seen:
+          seen = seen.union(range(peak_idx - 10, peak_idx + 10))
+          current_hash.append(peak_idx)
+        if len(current_hash) >= 10:
+          break
+      current_hash.append(moment)
+      return current_hash
+
+      
+    fun_start = time.time()
+
+    small_chunk = 2**16 #sample_rate
+
+    chunk_hashes = []
+    start_moment =time.time()
+    stream = cupy.cuda.Stream(non_blocking=True)
+    stream.use()
+    sorted_elems = []
+
+    together = 8
+    for idx, part in enumerate(chunked_read(name, together * small_chunk), start =1):
+      sample_start= idx * together * small_chunk
+      if idx % 1024 == 0:
+        print(f"{together * idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s")
+
+      for inner_idx in range(together):
+        current_sample_start = (sample_start + inner_idx * small_chunk) / 44100
+        bb = normalize_array(part[inner_idx * small_chunk: (inner_idx + 1) * small_chunk])
+        bb = cupy.fft.rfft(part)
+        max_val = cupy.abs(bb)
+        sorted_idx = cupy.argsort(max_val)
+        sorted_elems.append((sorted_idx, current_sample_start))
+        while len(sorted_elems) > 16:
+          chunk_hashes.append(calculate_hash(*sorted_elems[0]))
+          del sorted_elems[0]
+    for sorted_el in sorted_elems:
+      chunk_hashes.append(calculate_hash(*sorted_el))
+
+    chunk_hashes = sorted(chunk_hashes)
+    for pp in chunk_hashes[:10]:
+      print(f"Hash: {pp}")
+ 
 def read_chunks_gpu():
     start = time.time()
     name = "stubru.raw"
@@ -217,6 +272,7 @@ def read_chunks_gpu():
 
 def show_match():
   data = np.fromfile("stubru.raw", dtype=np.int16, count=  16 * 1024 * 1024)
+  data = normalize_array(np.asarray(data, dtype=np.double()))
   timing = np.arange(len(data)) / 44100.
 
   figure = plt.gcf()
@@ -228,7 +284,6 @@ def show_match():
 
   graph2 = figure.add_subplot(212)
   graph2.psd(data, Fs=44100, NFFT=256)
-
 
   view_interval = [0, 0]
   def onclick(event):
@@ -251,7 +306,10 @@ def show_match():
 
   cid = plt.gcf().canvas.mpl_connect('motion_notify_event', onclick)    
   plt.show()
-    
-#find_most_popular_section2(2 ** 18)
-decimator.plot_filter_response(decimator.low_pass_filter)
 
+find_most_popular_section3(2 ** 18)
+
+#decimator.plot_filter_response(decimator.low_pass_filter)
+
+#example_vals = chunked_read(FILE_NAME, 4 * 1024 * 1024)
+#decimator.decimate(next(example_vals))
