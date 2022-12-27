@@ -272,7 +272,7 @@ def read_chunks_gpu():
 
 def show_match():
   data = np.fromfile("stubru.raw", dtype=np.int16, count=  16 * 1024 * 1024)
-  data = normalize_array(np.asarray(data, dtype=np.double()))
+  data = normalize_array(np.asarray(data, dtype=np.double))
   timing = np.arange(len(data)) / 44100.
 
   figure = plt.gcf()
