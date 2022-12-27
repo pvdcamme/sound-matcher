@@ -64,7 +64,7 @@ def chunked_read(name, size):
         data = cupy.fromfile(name, dtype=np.int16, count=size, offset=offset)
         if len(data) != size:
             return
-        offset += size
+        offset += 2 * size
         yield normalize_array(cupy.asarray(data, dtype=np.float32))
 
 def chunked_read_cpu(name, size):
@@ -229,7 +229,7 @@ def find_most_popular_section3(length=2**18, name=FILE_NAME):
     sorted_elems = []
 
     together = 8
-    for idx, part in enumerate(chunked_read(name, together * small_chunk), start =1):
+    for idx, part in enumerate(chunked_read(name, together * small_chunk), start =0):
       sample_start= idx * together * small_chunk
       if idx % 1024 == 0:
         print(f"{together * idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s")
