@@ -3,8 +3,10 @@
 
   Very prototype at the moment.
 """
+import sys
 import struct
 import bisect
+import itertools as it
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -58,8 +60,8 @@ def normalize_array(data):
     data = (data - (min_val + scale/2 )) * (2. /scale )
     return data
     
-def chunked_read(name, size):
-    offset = 0
+def chunked_read(name, size, start = 0):
+    offset = 2 * start
     while True:
         data = cupy.fromfile(name, dtype=np.int16, count=size, offset=offset)
         if len(data) != size:
@@ -73,7 +75,7 @@ def chunked_read_cpu(name, size):
         data = np.fromfile(name, dtype=np.int16, count=size, offset=offset)
         if len(data) != size:
             return
-        offset += size
+        offset += 2 * size
         yield normalize_array(np.asarray(data, dtype=np.float32))
 
 
@@ -210,12 +212,11 @@ def find_most_popular_section3(length=2**18, name=FILE_NAME):
       current_hash = []
       for peak_idx in map(int, reversed(sorted_idx)):
         if peak_idx not in seen:
-          seen = seen.union(range(peak_idx - 10, peak_idx + 10))
+          seen = seen.union(set(range(peak_idx - 10, peak_idx + 10)))
           current_hash.append(peak_idx)
         if len(current_hash) >= 10:
           break
-      current_hash.append(moment)
-      return current_hash
+      return (current_hash, moment)
 
       
     fun_start = time.time()
@@ -229,27 +230,21 @@ def find_most_popular_section3(length=2**18, name=FILE_NAME):
     sorted_elems = []
 
     together = 8
-    for idx, part in enumerate(chunked_read(name, together * small_chunk), start =0):
-      sample_start= idx * together * small_chunk
+    for idx, part in enumerate(chunked_read(name, small_chunk), start =0):
+      sample_start= idx * small_chunk
       if idx % 1024 == 0:
-        print(f"{together * idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s")
+        print(f"{ idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s")
 
-      for inner_idx in range(together):
-        current_sample_start = (sample_start + inner_idx * small_chunk) / 44100
-        bb = normalize_array(part[inner_idx * small_chunk: (inner_idx + 1) * small_chunk])
-        bb = cupy.fft.rfft(part)
-        max_val = cupy.abs(bb)
-        sorted_idx = cupy.argsort(max_val)
-        sorted_elems.append((sorted_idx, current_sample_start))
-        while len(sorted_elems) > 16:
-          chunk_hashes.append(calculate_hash(*sorted_elems[0]))
-          del sorted_elems[0]
+      bb = cupy.fft.rfft(part)
+      max_val = cupy.abs(bb)
+      sorted_idx = cupy.argsort(max_val)
+      sorted_elems.append((sorted_idx, sample_start))
+      while len(sorted_elems) > 16:
+        chunk_hashes.append(calculate_hash(*sorted_elems[0]))
+        del sorted_elems[0]
     for sorted_el in sorted_elems:
       chunk_hashes.append(calculate_hash(*sorted_el))
-
-    chunk_hashes = sorted(chunk_hashes)
-    for pp in chunk_hashes[:10]:
-      print(f"Hash: {pp}")
+    return chunk_hashes
  
 def read_chunks_gpu():
     start = time.time()
@@ -307,7 +302,89 @@ def show_match():
   cid = plt.gcf().canvas.mpl_connect('motion_notify_event', onclick)    
   plt.show()
 
-find_most_popular_section3(2 ** 18)
+start_chunk_moment = 0
+total_call_count = 0
+
+def chunk_distance(a,b):
+  global start_chunk_moment, total_call_count
+  total_call_count += 1
+  if start_chunk_moment ==0:
+    start_chunk_moment = time.time()
+
+  if total_call_count % 1048576 == 0: 
+    print(f"{total_call_count / (time.time() - start_chunk_moment)} call/sec")
+    
+  peaks_a = a[0]
+  peaks_b = b[0]
+  total = 0
+  for idx, (ap, bp) in enumerate(zip(peaks_a, peaks_b)):
+    total += (1.5 ** idx) * abs(ap - bp)
+  return total
+
+def calc_closest_pair(chunks):
+  ll = len(chunks[0][0])
+  base = np.ones((len(chunks), ll))
+  weights = 0.8 ** np.arange(ll)
+  for idx, (ch, _start) in enumerate(chunks):
+    base[idx, :] = ch
+
+  result = []
+  for idx, _ in enumerate(chunks):
+    current = np.tensordot(np.abs(base - base[idx, :]), weights, axes=1)
+    current[idx] = 1E9
+    min_place = np.argmin(current)
+    result.append((current[min_place], min_place))
+  return result
+
+
+def calc_closest_pair_gpu(chunks):
+  start_fun = time.time()
+  ll = len(chunks[0][0])
+  base = cupy.ones((len(chunks), ll))
+  weights = 0.8 ** cupy.arange(ll, dtype=cupy.float32)
+
+  stream = cupy.cuda.Stream(non_blocking=True)
+
+  for idx, (ch, _start) in enumerate(chunks):
+    base[idx, :] = cupy.array(ch, dtype=cupy.float32)
+
+  result = []
+  print("Start calc")
+  with stream:
+    difference = cupy.empty_like(base)
+    for idx, _ in enumerate(chunks):
+      cupy.subtract(base, base[idx,:], out=difference)
+      cupy.abs(difference, out=difference)
+      current = cupy.tensordot(difference, weights, axes=1)
+      current[idx] = 1E9
+      min_place = cupy.argmin(current)
+      min_val = cupy.min(current)
+      result.append((min_val, idx, min_place))
+
+  
+  return [(float(mm), int(idx_1), int(idx_2)) for mm, idx_1, idx_2 in result]
+
+
+
+
+chunks = find_most_popular_section3(2 ** 18)
+
+
+start, closest_results_gpu, end =  (time.time(), calc_closest_pair_gpu(chunks), time.time())
+print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
+
+start, closest_results, end =  (time.time(), calc_closest_pair(chunks), time.time())
+print(f"CPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
+
+#closest_pair = min(it.product(chunks, chunks), key=lambda g: chunk_distaun)
+
+first_chunk = next(chunked_read(FILE_NAME, 2**16, start =0))
+print(first_chunk)
+next_chunk = next(chunked_read(FILE_NAME, 2**16, start =(2**16) * closest_results[0][1]))
+plt.plot(cupy.asnumpy(first_chunk))
+plt.plot(cupy.asnumpy(next_chunk))
+plt.grid()
+plt.show()
 
 #decimator.plot_filter_response(decimator.low_pass_filter)
 
