@@ -167,10 +167,3 @@ start, closest_results, end = (time.time(), calc_closest_pair_gpu(chunks),
                                time.time())
 print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
 
-first_chunk = next(chunked_read(FILE_NAME, 2**16, start=0))
-next_chunk = next(
-    chunked_read(FILE_NAME, 2**16, start=(2**16) * closest_results[0][2]))
-plt.plot(cupy.asnumpy(first_chunk))
-plt.plot(cupy.asnumpy(next_chunk))
-plt.grid()
-plt.show()
