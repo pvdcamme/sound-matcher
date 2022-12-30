@@ -20,6 +20,7 @@ import decimator
 
 FILE_NAME = "stubru.raw"
 
+
 def read_chunks():
     start = time.time()
     name = "stubru.raw"
@@ -27,7 +28,10 @@ def read_chunks():
     ctr = 0
     offset = 0
     while True:
-        data = np.fromfile(name, dtype=np.int16, count=chunk_size, offset=offset)
+        data = np.fromfile(name,
+                           dtype=np.int16,
+                           count=chunk_size,
+                           offset=offset)
         np.fft.rfft(data)
         offset += len(data) * 2
         ctr += 1
@@ -35,21 +39,24 @@ def read_chunks():
             print(f"Too small: {len(data)} vs {chunk_size}")
             break
 
-    print(f"Total time: {time.time() - start}")            
+    print(f"Total time: {time.time() - start}")
     return ctr
+
 
 def normalize_array(data):
     min_val = data.min()
     max_val = data.max()
-    scale = max_val - min_val    
-    data = (data - (min_val + scale/2 )) * (2. /scale )
+    scale = max_val - min_val
+    data = (data - (min_val + scale / 2)) * (2. / scale)
     return data
 
-def counter(start = 0):
+
+def counter(start=0):
     while True:
         yield start
         start += 1
-    
+
+
 def chunked_read(file_name, size, start=0):
     """
       Iterates over the data within file_name returns them in
@@ -57,107 +64,113 @@ def chunked_read(file_name, size, start=0):
     """
     offset = start * 2
     while True:
-        data = cupy.fromfile(file_name, dtype=np.int16, count=size, offset=offset)
+        data = cupy.fromfile(file_name,
+                             dtype=np.int16,
+                             count=size,
+                             offset=offset)
         if len(data) != size:
             return
         offset += 2 * size
         yield normalize_array(cupy.asarray(data, dtype=np.float32))
 
+
 def create_hashes(length=2**16, name=FILE_NAME):
     def calculate_hash(sorted_idx, moment):
-      seen = set(range(4))
-      current_hash = []
-      for peak_idx in reversed(sorted_idx.get()):
-        if peak_idx not in seen:
-          seen = seen.union(set(range(peak_idx - 10, peak_idx + 10)))
-          current_hash.append(peak_idx)
-        if len(current_hash) >= 10:
-          break
-      return (current_hash, moment)
-      
+        seen = set(range(4))
+        current_hash = []
+        for peak_idx in reversed(sorted_idx.get()):
+            if peak_idx not in seen:
+                seen = seen.union(set(range(peak_idx - 10, peak_idx + 10)))
+                current_hash.append(peak_idx)
+            if len(current_hash) >= 10:
+                break
+        return (current_hash, moment)
+
     fun_start = time.time()
     small_chunk = length
 
     chunk_hashes = []
-    start_moment =time.time()
+    start_moment = time.time()
     stream = cupy.cuda.Stream(non_blocking=True)
     stream.use()
     sorted_elems = []
 
-    for idx, part in enumerate(chunked_read(name, small_chunk), start =0):
-      
-      sample_start= idx * small_chunk
-      if idx % 1024 == 0:
-        print(f"{ idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s")
+    for idx, part in enumerate(chunked_read(name, small_chunk), start=0):
 
-      bb = cupy.fft.rfft(part)
-      max_val = cupy.abs(bb)
-      sorted_idx = cupy.argsort(max_val)
-      sorted_elems.append((sorted_idx, sample_start))
-      while len(sorted_elems) > 12:
-        chunk_hashes.append(calculate_hash(*sorted_elems[0]))
-        del sorted_elems[0]
+        sample_start = idx * small_chunk
+        if idx % 1024 == 0:
+            print(
+                f"{ idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s"
+            )
+
+        bb = cupy.fft.rfft(part)
+        max_val = cupy.abs(bb)
+        sorted_idx = cupy.argsort(max_val)
+        sorted_elems.append((sorted_idx, sample_start))
+        while len(sorted_elems) > 12:
+            chunk_hashes.append(calculate_hash(*sorted_elems[0]))
+            del sorted_elems[0]
     for sorted_el in sorted_elems:
-      chunk_hashes.append(calculate_hash(*sorted_el))
+        chunk_hashes.append(calculate_hash(*sorted_el))
     return chunk_hashes
 
+
 def show_match(file_name, start_idx, end_idx, length):
-  start_data =  next(chunked_read(file_name, length, start_idx * length))
-  compare_data = next(chunked_read(file_name, length, end_idx * length))
+    start_data = next(chunked_read(file_name, length, start_idx * length))
+    compare_data = next(chunked_read(file_name, length, end_idx * length))
 
-  timing = np.arange(len(start_data)) / 44100.
-  closest_match = int(cupy.argmax(cupyx.scipy.signal.correlate(start_data, compare_data)))
+    timing = np.arange(len(start_data)) / 44100.
+    closest_match = int(
+        cupy.argmax(cupyx.scipy.signal.correlate(start_data, compare_data)))
 
-  if closest_match > length / 2:
-    closest_match -= length
-  
+    if closest_match > length / 2:
+        closest_match -= length
 
-  plt.plot(timing, start_data.get())
-  plt.plot(timing + closest_match/44100, compare_data.get())
-  plt.show()
+    plt.plot(timing, start_data.get())
+    plt.plot(timing + closest_match / 44100, compare_data.get())
+    plt.show()
+
 
 def calc_closest_pair_gpu(chunks):
-  """
+    """
     Finds the closest matching other chunk from the list.
     These pairs should as similar as possible to each other.
   """
-  start_fun = time.time()
-  ll = len(chunks[0][0])
-  base = cupy.ones((len(chunks), ll))
-  weights = 0.8 ** cupy.arange(ll, dtype=cupy.float32)
+    start_fun = time.time()
+    ll = len(chunks[0][0])
+    base = cupy.ones((len(chunks), ll))
+    weights = 0.8**cupy.arange(ll, dtype=cupy.float32)
 
-  stream = cupy.cuda.Stream(non_blocking=True)
+    stream = cupy.cuda.Stream(non_blocking=True)
 
-  for idx, (ch, _start) in enumerate(chunks):
-    base[idx, :] = cupy.array(ch, dtype=cupy.float32)
+    for idx, (ch, _start) in enumerate(chunks):
+        base[idx, :] = cupy.array(ch, dtype=cupy.float32)
 
-  result = []
-  with stream:
-    difference = cupy.empty_like(base)
-    for idx, _ in enumerate(chunks):
-      cupy.subtract(base, base[idx,:], out=difference)
-      cupy.abs(difference, out=difference)
-      current = cupy.tensordot(difference, weights, axes=1)
-      current[idx] = 1E9
-      min_place = cupy.argmin(current)
-      min_val = cupy.min(current)
-      result.append((min_val, idx, min_place))
+    result = []
+    with stream:
+        difference = cupy.empty_like(base)
+        for idx, _ in enumerate(chunks):
+            cupy.subtract(base, base[idx, :], out=difference)
+            cupy.abs(difference, out=difference)
+            current = cupy.tensordot(difference, weights, axes=1)
+            current[idx] = 1E9
+            min_place = cupy.argmin(current)
+            min_val = cupy.min(current)
+            result.append((min_val, idx, min_place))
 
-  return [(float(mm), int(idx_1), int(idx_2)) for mm, idx_1, idx_2 in result]
+    return [(float(mm), int(idx_1), int(idx_2)) for mm, idx_1, idx_2 in result]
 
 
+chunks = create_hashes(2**16)
 
-chunks = create_hashes(2 ** 16)
-
-start, closest_results, end =  (time.time(), calc_closest_pair_gpu(chunks), time.time())
+start, closest_results, end = (time.time(), calc_closest_pair_gpu(chunks),
+                               time.time())
 print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
 
-
-first_chunk = next(chunked_read(FILE_NAME, 2**16, start =0))
-next_chunk = next(chunked_read(FILE_NAME, 2**16, start =(2**16) * closest_results[0][2]))
+first_chunk = next(chunked_read(FILE_NAME, 2**16, start=0))
+next_chunk = next(
+    chunked_read(FILE_NAME, 2**16, start=(2**16) * closest_results[0][2]))
 plt.plot(cupy.asnumpy(first_chunk))
 plt.plot(cupy.asnumpy(next_chunk))
 plt.grid()
 plt.show()
-
-
