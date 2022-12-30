@@ -321,22 +321,6 @@ def chunk_distance(a,b):
     total += (1.5 ** idx) * abs(ap - bp)
   return total
 
-def calc_closest_pair(chunks):
-  ll = len(chunks[0][0])
-  base = np.ones((len(chunks), ll))
-  weights = 0.8 ** np.arange(ll)
-  for idx, (ch, _start) in enumerate(chunks):
-    base[idx, :] = ch
-
-  result = []
-  for idx, _ in enumerate(chunks):
-    current = np.tensordot(np.abs(base - base[idx, :]), weights, axes=1)
-    current[idx] = 1E9
-    min_place = np.argmin(current)
-    result.append((current[min_place], min_place))
-  return result
-
-
 def calc_closest_pair_gpu(chunks):
   start_fun = time.time()
   ll = len(chunks[0][0])
@@ -361,32 +345,21 @@ def calc_closest_pair_gpu(chunks):
       min_val = cupy.min(current)
       result.append((min_val, idx, min_place))
 
-  
   return [(float(mm), int(idx_1), int(idx_2)) for mm, idx_1, idx_2 in result]
-
 
 
 
 chunks = find_most_popular_section3(2 ** 18)
 
-
-start, closest_results_gpu, end =  (time.time(), calc_closest_pair_gpu(chunks), time.time())
+start, closest_results, end =  (time.time(), calc_closest_pair_gpu(chunks), time.time())
 print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
 
-start, closest_results, end =  (time.time(), calc_closest_pair(chunks), time.time())
-print(f"CPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
-
-#closest_pair = min(it.product(chunks, chunks), key=lambda g: chunk_distaun)
 
 first_chunk = next(chunked_read(FILE_NAME, 2**16, start =0))
-print(first_chunk)
 next_chunk = next(chunked_read(FILE_NAME, 2**16, start =(2**16) * closest_results[0][1]))
 plt.plot(cupy.asnumpy(first_chunk))
 plt.plot(cupy.asnumpy(next_chunk))
 plt.grid()
 plt.show()
 
-#decimator.plot_filter_response(decimator.low_pass_filter)
 
-#example_vals = chunked_read(FILE_NAME, 4 * 1024 * 1024)
-#decimator.decimate(next(example_vals))
