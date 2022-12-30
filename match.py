@@ -89,26 +89,22 @@ def create_hashes(length=2**16, name=FILE_NAME):
                 break
         return (current_hash, moment)
 
-    fun_start = time.time()
-    small_chunk = length
-
     chunk_hashes = []
     start_moment = time.time()
     stream = cupy.cuda.Stream(non_blocking=True)
-    stream.use()
 
-    for idx, part in enumerate(chunked_read(name, small_chunk), start=0):
-
-        sample_start = idx * small_chunk
+    for idx, part in enumerate(chunked_read(name, length), start=0):
+        sample_start = idx * length 
         if idx % 1024 == 0:
-            print(
-                f"{ idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s"
-            )
+          idx_speed = idx / (time.time() - start_moment)
+          msg = f"{idx_speed:.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s"
+          print(msg)
 
-        bb = cupy.fft.rfft(part)
-        max_val = cupy.abs(bb)
-        sorted_idx = cupy.argsort(max_val)
-        chunk_hashes.append(calculate_hash(sorted_idx, sample_start))
+        with stream:
+          bb = cupy.fft.rfft(part)
+          max_val = cupy.abs(bb)
+          sorted_idx = cupy.argsort(max_val)
+          chunk_hashes.append(calculate_hash(sorted_idx, sample_start))
     return chunk_hashes
 
 
