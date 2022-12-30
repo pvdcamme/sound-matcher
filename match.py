@@ -75,6 +75,9 @@ def chunked_read(file_name, size, start=0):
 
 
 def create_hashes(length=2**16, name=FILE_NAME):
+    """
+        
+    """
     def calculate_hash(sorted_idx, moment):
         seen = set(range(4))
         current_hash = []
@@ -93,7 +96,6 @@ def create_hashes(length=2**16, name=FILE_NAME):
     start_moment = time.time()
     stream = cupy.cuda.Stream(non_blocking=True)
     stream.use()
-    sorted_elems = []
 
     for idx, part in enumerate(chunked_read(name, small_chunk), start=0):
 
@@ -106,12 +108,7 @@ def create_hashes(length=2**16, name=FILE_NAME):
         bb = cupy.fft.rfft(part)
         max_val = cupy.abs(bb)
         sorted_idx = cupy.argsort(max_val)
-        sorted_elems.append((sorted_idx, sample_start))
-        while len(sorted_elems) > 12:
-            chunk_hashes.append(calculate_hash(*sorted_elems[0]))
-            del sorted_elems[0]
-    for sorted_el in sorted_elems:
-        chunk_hashes.append(calculate_hash(*sorted_el))
+        chunk_hashes.append(calculate_hash(sorted_idx, sample_start))
     return chunk_hashes
 
 
@@ -135,7 +132,7 @@ def calc_closest_pair_gpu(chunks):
     """
     Finds the closest matching other chunk from the list.
     These pairs should as similar as possible to each other.
-  """
+    """
     start_fun = time.time()
     ll = len(chunks[0][0])
     base = cupy.ones((len(chunks), ll))
