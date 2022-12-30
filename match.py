@@ -44,32 +44,25 @@ def normalize_array(data):
     scale = max_val - min_val    
     data = (data - (min_val + scale/2 )) * (2. /scale )
     return data
-    
-def chunked_read(name, size, start = 0):
-    offset = 2 * start
-    while True:
-        data = cupy.fromfile(name, dtype=np.int16, count=size, offset=offset)
-        if len(data) != size:
-            return
-        offset += 2 * size
-        yield normalize_array(cupy.asarray(data, dtype=np.float32))
-
-def chunked_read_cpu(name, size):
-    offset = 0
-    while True:
-        data = np.fromfile(name, dtype=np.int16, count=size, offset=offset)
-        if len(data) != size:
-            return
-        offset += 2 * size
-        yield normalize_array(np.asarray(data, dtype=np.float32))
-
-
 
 def counter(start = 0):
     while True:
         yield start
         start += 1
-        
+    
+def chunked_read(file_name, size, start=0):
+    """
+      Iterates over the data within file_name returns them in
+      chunks of size.
+    """
+    offset = start * 2
+    while True:
+        data = cupy.fromfile(file_name, dtype=np.int16, count=size, offset=offset)
+        if len(data) != size:
+            return
+        offset += 2 * size
+        yield normalize_array(cupy.asarray(data, dtype=np.float32))
+    
 def find_most_popular_section(length=2**18):
     fun_start = time.time()
     name = "stubru.raw"
@@ -195,14 +188,13 @@ def create_hashes(length=2**16, name=FILE_NAME):
     def calculate_hash(sorted_idx, moment):
       seen = set(range(4))
       current_hash = []
-      for peak_idx in map(int, reversed(sorted_idx)):
+      for peak_idx in reversed(sorted_idx.get()):
         if peak_idx not in seen:
           seen = seen.union(set(range(peak_idx - 10, peak_idx + 10)))
           current_hash.append(peak_idx)
         if len(current_hash) >= 10:
           break
       return (current_hash, moment)
-
       
     fun_start = time.time()
     small_chunk = length
@@ -214,6 +206,7 @@ def create_hashes(length=2**16, name=FILE_NAME):
     sorted_elems = []
 
     for idx, part in enumerate(chunked_read(name, small_chunk), start =0):
+      
       sample_start= idx * small_chunk
       if idx % 1024 == 0:
         print(f"{ idx / (time.time() - start_moment):.2f} part/s -- {len(chunk_hashes)} hashes -- {sample_start/ 44100:.2f}s")
@@ -222,48 +215,26 @@ def create_hashes(length=2**16, name=FILE_NAME):
       max_val = cupy.abs(bb)
       sorted_idx = cupy.argsort(max_val)
       sorted_elems.append((sorted_idx, sample_start))
-      while len(sorted_elems) > 16:
+      while len(sorted_elems) > 12:
         chunk_hashes.append(calculate_hash(*sorted_elems[0]))
         del sorted_elems[0]
     for sorted_el in sorted_elems:
       chunk_hashes.append(calculate_hash(*sorted_el))
     return chunk_hashes
 
-def show_match():
-  data = np.fromfile("stubru.raw", dtype=np.int16, count=  16 * 1024 * 1024)
-  data = normalize_array(np.asarray(data, dtype=np.double))
-  timing = np.arange(len(data)) / 44100.
+def show_match(file_name, start_idx, end_idx, length):
+  start_data =  next(chunked_read(file_name, length, start_idx * length))
+  compare_data = next(chunked_read(file_name, length, end_idx * length))
 
-  figure = plt.gcf()
+  timing = np.arange(len(start_data)) / 44100.
+  closest_match = int(cupy.argmax(cupyx.scipy.signal.correlate(start_data, compare_data)))
 
-  graph1 = figure.add_subplot(211)
-  graph1.plot(timing, data)
-  x_axis = plt.gca().get_xaxis()
+  if closest_match > length / 2:
+    closest_match -= length
+  
 
-
-  graph2 = figure.add_subplot(212)
-  graph2.psd(data, Fs=44100, NFFT=256)
-
-  view_interval = [0, 0]
-  def onclick(event):
-      global view_interval
-      new_interval = list(x_axis.get_view_interval())
-      if new_interval == view_interval:
-          return
-      view_interval = new_interval
-      a, b = view_interval
-
-      start_moment = time.time()
-      start = bisect.bisect(timing, a)
-      end = bisect.bisect(timing, b)
-
-      graph2.clear()
-      graph2.psd(data[start:end], Fs=44100, NFFT=4096)
-    
-      print(f"{view_interval} -> {(start, end)} in {time.time() - start_moment:.2}")
-    
-
-  cid = plt.gcf().canvas.mpl_connect('motion_notify_event', onclick)    
+  plt.plot(timing, start_data.get())
+  plt.plot(timing + closest_match/44100, compare_data.get())
   plt.show()
 
 def calc_closest_pair_gpu(chunks):
