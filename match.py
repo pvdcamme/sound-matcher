@@ -191,7 +191,7 @@ def find_most_popular_section2(length=2**18, name=FILE_NAME):
         print(f"chunk results up to moment, x{((base_idx + 1) * length / sample_rate)/(time.time() - fun_start):.2f} -- Best moment {peak_pos:.2f}-- {len(together)} running")
     return peaker(together, True)
             
-def find_most_popular_section3(length=2**18, name=FILE_NAME):
+def create_hashes(length=2**16, name=FILE_NAME):
     def calculate_hash(sorted_idx, moment):
       seen = set(range(4))
       current_hash = []
@@ -205,8 +205,7 @@ def find_most_popular_section3(length=2**18, name=FILE_NAME):
 
       
     fun_start = time.time()
-
-    small_chunk = 2**16 #sample_rate
+    small_chunk = length
 
     chunk_hashes = []
     start_moment =time.time()
@@ -214,7 +213,6 @@ def find_most_popular_section3(length=2**18, name=FILE_NAME):
     stream.use()
     sorted_elems = []
 
-    together = 8
     for idx, part in enumerate(chunked_read(name, small_chunk), start =0):
       sample_start= idx * small_chunk
       if idx % 1024 == 0:
@@ -299,7 +297,7 @@ def calc_closest_pair_gpu(chunks):
 
 
 
-chunks = find_most_popular_section3(2 ** 18)
+chunks = create_hashes(2 ** 16)
 
 start, closest_results, end =  (time.time(), calc_closest_pair_gpu(chunks), time.time())
 print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
