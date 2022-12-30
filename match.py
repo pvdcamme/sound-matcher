@@ -20,21 +20,6 @@ import decimator
 
 FILE_NAME = "stubru.raw"
 
-def benchmark_np():
-  size = 2 ** 18
-  cnt = 128
-  to_check = np.random.random(size)
-  others = [np.random.random(size) for _ in range(cnt)]
-  total_max = 0
-  start = time.time()
-  for o in others:
-    current_max = np.max(np.fft.irfft(to_check * o))
-    total_max = max(total_max, current_max)
-
-  end = time.time()
-  print(f"Numpy: {total_max} in {1e3 * (end - start):.2f} ms")
-
-
 def read_chunks():
     start = time.time()
     name = "stubru.raw"
@@ -245,25 +230,6 @@ def find_most_popular_section3(length=2**18, name=FILE_NAME):
     for sorted_el in sorted_elems:
       chunk_hashes.append(calculate_hash(*sorted_el))
     return chunk_hashes
- 
-def read_chunks_gpu():
-    start = time.time()
-    name = "stubru.raw"
-    chunk_size = 2 * 1024 * 1024
-    ctr = 0
-    offset = 0
-    while True:
-        data = cupy.fromfile(name, dtype=np.int16, count=chunk_size, offset=offset)
-        cupy.fft.rfft(data)
-        offset += len(data) * 2
-        ctr += 1
-
-        if len(data) < chunk_size:
-            print(f"Too small: {len(data)} vs {chunk_size}")
-            break
-
-    print(f"Total time: {time.time() - start}")            
-    return ctr
 
 def show_match():
   data = np.fromfile("stubru.raw", dtype=np.int16, count=  16 * 1024 * 1024)
@@ -302,26 +268,11 @@ def show_match():
   cid = plt.gcf().canvas.mpl_connect('motion_notify_event', onclick)    
   plt.show()
 
-start_chunk_moment = 0
-total_call_count = 0
-
-def chunk_distance(a,b):
-  global start_chunk_moment, total_call_count
-  total_call_count += 1
-  if start_chunk_moment ==0:
-    start_chunk_moment = time.time()
-
-  if total_call_count % 1048576 == 0: 
-    print(f"{total_call_count / (time.time() - start_chunk_moment)} call/sec")
-    
-  peaks_a = a[0]
-  peaks_b = b[0]
-  total = 0
-  for idx, (ap, bp) in enumerate(zip(peaks_a, peaks_b)):
-    total += (1.5 ** idx) * abs(ap - bp)
-  return total
-
 def calc_closest_pair_gpu(chunks):
+  """
+    Finds the closest matching other chunk from the list.
+    These pairs should as similar as possible to each other.
+  """
   start_fun = time.time()
   ll = len(chunks[0][0])
   base = cupy.ones((len(chunks), ll))
@@ -333,7 +284,6 @@ def calc_closest_pair_gpu(chunks):
     base[idx, :] = cupy.array(ch, dtype=cupy.float32)
 
   result = []
-  print("Start calc")
   with stream:
     difference = cupy.empty_like(base)
     for idx, _ in enumerate(chunks):
@@ -356,7 +306,7 @@ print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
 
 
 first_chunk = next(chunked_read(FILE_NAME, 2**16, start =0))
-next_chunk = next(chunked_read(FILE_NAME, 2**16, start =(2**16) * closest_results[0][1]))
+next_chunk = next(chunked_read(FILE_NAME, 2**16, start =(2**16) * closest_results[0][2]))
 plt.plot(cupy.asnumpy(first_chunk))
 plt.plot(cupy.asnumpy(next_chunk))
 plt.grid()
