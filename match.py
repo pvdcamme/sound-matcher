@@ -112,6 +112,7 @@ def create_hashes(length=2**16, name=FILE_NAME):
 def create_hashes_parallel(length=2**16, name=FILE_NAME):
     """
       Splits up the file in multiple hashes of length.
+      These hashes can be used for pattern matching.
     """
     TOGETHER = 128
     def calculate_hash(sorted_idx, moment):
@@ -126,12 +127,10 @@ def create_hashes_parallel(length=2**16, name=FILE_NAME):
         return (current_hash, moment)
 
     chunk_hashes = []
-    start_moment = time.time()
     stream = cupy.cuda.Stream(non_blocking=True)
-    stream_other = cupy.cuda.Stream(non_blocking=True)
 
+    start_moment = time.time()
     with stream:
-      previous= None
       for idx, part in enumerate(chunked_read(name, TOGETHER * length, start=0)):
           it_start = time.time()
           rows = part.reshape((TOGETHER, length))
@@ -139,13 +138,14 @@ def create_hashes_parallel(length=2**16, name=FILE_NAME):
           min_val = rows.min(axis=1)
 
           scale = max_val - min_val
-          rows = ((rows.T- (min_val + scale / 2)) * (2. / scale)).T
-
+          rows = ((rows.T- (min_val + scale / 2.)) * (2. / scale)).T
           bb = cupy.fft.rfft(rows, axis=1)
           magnitudes = cupy.abs(bb)
-
+          
+          # placed here to work concurrently with GPU work.
           starts = [length * (idx * TOGETHER + indiv_idx) for indiv_idx in range(TOGETHER)]
 
+          # argsort fully seems to be cheaper than the alternatives (e.g. argparition)
           sorted_idx = magnitudes.argsort(axis=1)
           sorted_idx = cupy.asnumpy(sorted_idx)
 
@@ -158,7 +158,6 @@ def create_hashes_parallel(length=2**16, name=FILE_NAME):
             idx_speed =  len(chunk_hashes) / (time.time() - start_moment)
             msg = f"{idx_speed:.2f} part/s -- {len(chunk_hashes)} hashes -- {starts[0]/ 44100:.2f}s -- GPU took: {gpu_done - it_start} + cpu= {time.time() - gpu_done}"
             print(msg)
-
 
     return chunk_hashes
 
