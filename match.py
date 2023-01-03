@@ -109,6 +109,61 @@ def create_hashes(length=2**16, name=FILE_NAME):
           stream.synchronize()
     return chunk_hashes
 
+def create_hashes_parallel(length=2**16, name=FILE_NAME):
+    """
+      Splits up the file in multiple hashes of length.
+    """
+    TOGETHER = 128
+    def calculate_hash(sorted_idx, moment):
+        seen = set(range(4))
+        current_hash = []
+        for peak_idx in reversed(sorted_idx):
+            if peak_idx not in seen:
+                current_hash.append(peak_idx)
+                if len(current_hash) == 10:
+                    break
+                seen = seen.union(range(peak_idx - 10, peak_idx + 10))
+        return (current_hash, moment)
+
+    chunk_hashes = []
+    start_moment = time.time()
+    stream = cupy.cuda.Stream(non_blocking=True)
+    stream_other = cupy.cuda.Stream(non_blocking=True)
+
+    with stream:
+      previous= None
+      for idx, part in enumerate(chunked_read(name, TOGETHER * length, start=0)):
+          it_start = time.time()
+          rows = part.reshape((TOGETHER, length))
+          max_val = rows.max(axis=1)
+          min_val = rows.min(axis=1)
+
+          scale = max_val - min_val
+          rows = ((rows.T- (min_val + scale / 2)) * (2. / scale)).T
+
+          bb = cupy.fft.rfft(rows, axis=1)
+          magnitudes = cupy.abs(bb)
+
+          starts = [length * (idx * TOGETHER + indiv_idx) for indiv_idx in range(TOGETHER)]
+
+          sorted_idx = magnitudes.argsort(axis=1)
+          sorted_idx = cupy.asnumpy(sorted_idx)
+
+          gpu_done = time.time()
+
+          for row_idx in range(TOGETHER):
+            chunk_hashes.append(calculate_hash(sorted_idx[row_idx,:], starts[row_idx]))
+
+          if idx % 8 == 0:
+            idx_speed =  len(chunk_hashes) / (time.time() - start_moment)
+            msg = f"{idx_speed:.2f} part/s -- {len(chunk_hashes)} hashes -- {starts[0]/ 44100:.2f}s -- GPU took: {gpu_done - it_start} + cpu= {time.time() - gpu_done}"
+            print(msg)
+
+
+    return chunk_hashes
+
+
+
 def show_match(file_name, start_idx, end_idx, length):
     start_data = next(chunked_read(file_name, length, start_idx * length))
     compare_data = next(chunked_read(file_name, length, end_idx * length))
@@ -123,7 +178,6 @@ def show_match(file_name, start_idx, end_idx, length):
     plt.plot(timing, start_data.get())
     plt.plot(timing + closest_match / 44100, compare_data.get())
     plt.show()
-
 
 def calc_closest_pair_gpu(chunks):
     """
@@ -154,23 +208,37 @@ def calc_closest_pair_gpu(chunks):
 
     return [(float(mm), int(idx_1), int(idx_2)) for mm, idx_1, idx_2 in result]
 
+print("Starting")
+chunks = create_hashes_parallel(2**16)
+start, closest_results, end = (time.time(), calc_closest_pair_gpu(chunks),
+                               time.time())
+print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
 
-#chunks = create_hashes(2**12)
-#start, closest_results, end = (time.time(), calc_closest_pair_gpu(chunks),
-#                               time.time())
-#print(f"GPU Closest in {len(chunks) * len(chunks) / (end - start)} assoc/sec")
-#
+decent_to_show =[a for a in closest_results if 0.1 < a[0] <= 1]
+np.random.shuffle(decent_to_show)
+closest = decent_to_show[0]
+show_match(FILE_NAME, closest[1], closest[2], 2**16)
+sys.exit(0)
 
-together_count = 512
-vals = cupy.random.random(together_count * 2** 16, dtype=cupy.float32)
 def multiple_together(vals):
   stream = cupy.cuda.Stream(non_blocking=True)
   with stream:
-    vals = vals.reshape((together_count, 2**16))
+    vals = vals.reshape((together_count, 2**12))
     fft = cupy.fft.rfft(vals, axis=1)
     fft = cupy.abs(fft)
     fft[:,0] = 0
     max_idx = cupy.argmax(fft, axis=1)
+  stream.synchronize()
+  return max_idx.get()
+
+def multiple_together_t(vals):
+  stream = cupy.cuda.Stream(non_blocking=True)
+  with stream:
+    vals = vals.reshape((2 ** 12, together_count))
+    fft = cupy.fft.rfft(vals, axis=0)
+    fft = cupy.abs(fft)
+    fft[0,:] = 0
+    max_idx = cupy.argmax(fft, axis=0)
   stream.synchronize()
   return max_idx.get()
 
@@ -179,7 +247,7 @@ def multiple_seperate(vals):
   stream = cupy.cuda.Stream(non_blocking=True)
   with stream:
     for idx in range(together_count):
-      row = cupy.fft.rfft(vals[idx * 2**16: (idx+1) * 2**16])
+      row = cupy.fft.rfft(vals[idx * 2**12: (idx+1) * 2**12])
       row = cupy.abs(row)
       row[0] = 0
       max_idx = cupy.argmax(row)
@@ -187,22 +255,47 @@ def multiple_seperate(vals):
   return [float(val) for val in result]
 
 
-
-print(f"together: {multiple_together(vals)}")
-print(f"seperate: {multiple_seperate(vals)}")
-
 print("starting benchmark")
 
-res = cupyx.profiler.benchmark(multiple_together, (vals,), n_repeat=200)
-print(f"benchmark together:  {res}")
+exponents = []
+gpu_together= []
 
-res = cupyx.profiler.benchmark(multiple_seperate, (vals,), n_repeat=200)
-print(f"benchmark seperate:  {res}")
+gpu_together_t= []
+gpu_seperate= []
+
+
+cpu_together= []
+cpu_seperate= []
 
 
 
+for exp in sorted(set([int(2 ** exp) for exp in np.arange(1, 10, 0.1)])):
+  together_count = exp
+  print(f"Testing {together_count}")
+  exponents.append(together_count)
+  vals = cupy.random.random(together_count * 2** 12, dtype=cupy.float32)
+
+  res = cupyx.profiler.benchmark(multiple_together, (vals,), n_repeat=100, n_warmup = 20)
+  gpu_together.append(1E6 * np.average(res.gpu_times) / together_count)
+  cpu_together.append(1E6 * np.average(res.cpu_times) / together_count)
   
+  res = cupyx.profiler.benchmark(multiple_together_t, (vals,), n_repeat=100, n_warmup = 20)
+  gpu_together_t.append(1E6 * np.average(res.gpu_times) / together_count)
+ 
 
+  res = cupyx.profiler.benchmark(multiple_seperate, (vals,), n_repeat=100, n_warmup = 20)
+  gpu_seperate.append(1E6 * np.average(res.gpu_times) / together_count)
+  cpu_seperate.append(1E6 * np.average(res.cpu_times) / together_count)
+  
+plt.plot(exponents, gpu_together, label="together")
+plt.plot(exponents, gpu_together_t, label="together_t")
+plt.plot(exponents, gpu_seperate, label="separate")
+plt.legend()
+plt.grid()
+plt.xscale("log")
+plt.ylabel("duration [us]")
+
+plt.show()
 
 def snr_vs_duration(file_name):
   duration = 1024
